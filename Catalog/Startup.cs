@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Catalog.Configuration;
 using Catalog.Repositories;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.HttpsPolicy;
 using Microsoft.AspNetCore.Mvc;
@@ -34,20 +35,30 @@ namespace Catalog
         {
             BsonSerializer.RegisterSerializer(new GuidSerializer(BsonType.String));
             BsonSerializer.RegisterSerializer(new DateTimeOffsetSerializer(BsonType.String));
+            var mongoDbSettings = Configuration.GetSection(nameof(MongoDbSettings)).Get<MongoDbSettings>();
+
 
             services.AddSingleton<IMongoClient>(ServiceProvider => 
             {
-                var settings = Configuration.GetSection(nameof(MongoDbSettings)).Get<MongoDbSettings>();
-                return new MongoClient(settings.ConnectionString);
+                return new MongoClient(mongoDbSettings.ConnectionString);
             });
 
             services.AddSingleton<IItemsRepository,MongoDbItemsRepository>();
 
-            services.AddControllers();
+            services.AddControllers(options => 
+            {
+                options.SuppressAsyncSuffixInActionNames = false;
+            });
             services.AddSwaggerGen(c =>
             {
                 c.SwaggerDoc("v1", new OpenApiInfo { Title = "Catalog", Version = "v1" });
             });
+
+            services.AddHealthChecks()
+            .AddMongoDb(mongoDbSettings.ConnectionString,
+            name: "mongodb", 
+            timeout: TimeSpan.FromSeconds(3),
+            tags: new[] {"ready"});
 
         }
 
@@ -70,6 +81,17 @@ namespace Catalog
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapControllers();
+
+                endpoints.MapHealthChecks("/health/ready", new HealthCheckOptions
+                {
+                    Predicate = (check) => check.Tags.Contains("ready")
+                });
+
+                endpoints.MapHealthChecks("/health/live", new HealthCheckOptions
+                {
+                    Predicate = (_) => false
+                });
+
             });
         }
     }
